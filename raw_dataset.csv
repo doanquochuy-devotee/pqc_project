@@ -1,0 +1,2 @@
+Latency_Injected,Packet_Loss_Injected,Handshake_Completion_Time_ms,IP_Fragmentation_Count,TCP_Retransmissions,Final_Negotiated_State,Negotiated_Group
+100,5,6765.633106231689,0,9,S2,29
