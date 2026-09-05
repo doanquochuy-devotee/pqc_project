@@ -1,7 +1,7 @@
 """
 Agility at the Boundary: PQC TLS 1.3 Telemetry Parser
 --------------------------------------------------
-Author: Huy Doan (Student ID: 31251024499)
+Author: Huy Doan
 Objective: Extract handshake completion time, IP fragmentation counts,
            and negotiated cryptographic states from raw PCAP files.
 """
