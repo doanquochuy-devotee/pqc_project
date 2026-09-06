@@ -24,18 +24,11 @@ The script utilizes `pyshark` (a Python wrapper for `tshark`) to inspect the TLS
 4. **IP Fragmentation Rate:** Inspects IPv4 `flags_mf` and `frag_offset` to count fragmented packets caused by oversized PQC payloads exceeding standard MTU limits.
 5. **TCP Retransmissions:** Analyzes TCP flags to count physical packet retransmissions, validating the impact of network packet loss.
 
-
-## Current Status
-
-**Testing Phase:** The script has been successfully validated against a sample (`hybrid_L100_P5.pcap`). The parser accurately captured state degradation ($S_2$ fallback to Group 29) alongside 9 TCP retransmissions, confirming its readiness to process the full batch of experimental captures from the network team.
-
 ## Usage Instructions
 
-1. **Prepare Captures:** Place all testbed network capture files (`.pcap` or `.pcapng`) into a directory named `captures/` in the same folder as the script. Ensure filenames follow the taxonomy `hybrid_L[latency]_P[loss]_J[].pcap` (e.g., `hybrid_L100_P5.pcap`) so the script can auto-label the injected variables.
+1. **Prepare Captures:** Place all testbed network capture files into a directory named `captures/` in the same folder as the script. Ensure filenames follow the taxonomy `hybrid_L[latency]_J[jitter]_P[loss].pcap` (e.g., `hybrid_L100_J20_P5.pcap`).
 2. **Execute Parser:**
 ```bash
 python3 telemetry_parser.py
-
 ```
-
-3. **Output:** The script will process all captures in bulk and generate a structured `raw_dataset.csv` file, ready for data visualization and modeling.
+3. **Output:** The script will process all captures in bulk and generate a structured `raw_dataset.csv` file, ready to be loaded into Pandas or DuckDB for data visualization and Markov state-transition modeling.
