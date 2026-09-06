@@ -26,7 +26,7 @@ The script utilizes `pyshark` (a Python wrapper for `tshark`) to inspect the TLS
 
 ## Usage Instructions
 
-1. **Prepare Captures:** Place all testbed network capture files into a directory named `captures/` in the same folder as the script. Ensure filenames follow the taxonomy `hybrid_L[latency]_J[jitter]_P[loss].pcap` (e.g., `hybrid_L100_J20_P5.pcap`).
+1. **Prepare Captures:** Place all testbed network capture files into a directory named `captures/` in the same folder as the script. Ensure filenames follow the taxonomy `scenario_L[latency]_J[jitter]_P[loss].pcap` (e.g., `hybrid_L100_J20_P5.pcap`).
 2. **Execute Parser:**
 ```bash
 python3 telemetry_parser.py
