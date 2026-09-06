@@ -13,8 +13,11 @@ import pyshark
 import pandas as pd
 import numpy as np
 import asyncio
+import warnings
 
-# --- EVENT LOOP HOTFIX FOR PYTHON 3.10+ ---
+# --- WARNING FILTERS & MONKEY PATCH ---
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 try:
     asyncio.get_event_loop()
 except RuntimeError:
@@ -39,28 +42,40 @@ def parse_pcap_files(pcap_dir, output_csv):
         filename = os.path.basename(filepath)
         print(f"\n[+] Analyzing: {filename}")
 
-        # --- 1. PARSE INJECTED IMPAIRMENTS FROM FILENAME ---
+        # --- 1. PARSE INJECTED IMPAIRMENTS FROM FILENAME (INDEPENDENT VARIABLES) ---
+        # Supports regex variations: 
+        # - hybrid_L100_P5.pcap -> Latency=100ms, Jitter=0ms, Loss=5%
+        # - hybrid_L100_J10_P5.pcap -> Latency=100ms, Jitter=10ms, Loss=5%
         latency_injected = 0
+        jitter_injected = 0
         loss_injected = 0
         
-        match = re.search(r"[Ll](\d+)_?[Pp](\d+)", filename)
-        if match:
-            latency_injected = int(match.group(1))
-            loss_injected = int(match.group(2))
-            print(f"    -> Detected Injected Faults: Latency = {latency_injected}ms, Loss = {loss_injected}%")
-        else:
-            print(f"    -> [Warning] Filename does not match 'L[ms]_P[%]' pattern. Defaulting metrics to 0.")
+        # Check for Latency and Loss
+        lat_match = re.search(r"[Ll](\d+)", filename)
+        loss_match = re.search(r"[Pp](\d+)", filename)
+        jit_match = re.search(r"[Jj](\d+)", filename)
+        
+        if lat_match:
+            latency_injected = int(lat_match.group(1))
+        if loss_match:
+            loss_injected = int(loss_match.group(1))
+        if jit_match:
+            jitter_injected = int(jit_match.group(1))
+            
+        print(f"    -> Injected Metrics (Design Parameters): Latency = {latency_injected}ms, Jitter = {jitter_injected}ms, Loss = {loss_injected}%")
 
-        # --- 2. INITIALIZE TELEMETRY METRICS ---
+        # --- 2. INITIALIZE TELEMETRY METRICS (DEPENDENT VARIABLES) ---
         tcp_syn_time = None
+        tcp_syn_ack_time = None
         tls_finished_time = None
         fragment_count = 0
         tcp_retransmissions = 0
         negotiated_state = "SF"  # Default to 'SF' (Connection Failure / Timeout)
         negotiated_group = "Unknown"
+        
+        packet_timestamps = []  # To calculate empirical jitter from packet inter-arrival times
 
         # --- 3. EXECUTE PYSHARK PACKET SCAN ---
-        # Note: We filter for "tcp" which naturally includes "tls" traffic
         cap = pyshark.FileCapture(
             filepath, 
             display_filter="tcp",
@@ -69,6 +84,10 @@ def parse_pcap_files(pcap_dir, output_csv):
 
         try:
             for packet in cap:
+                # Store sniff timestamp for packet-level statistics
+                sniff_time_sec = float(packet.sniff_time.timestamp())
+                packet_timestamps.append(sniff_time_sec)
+
                 # A. Track IP Fragmentation (Evaluating IPv4 layer flags)
                 if "IP" in packet:
                     try:
@@ -80,18 +99,22 @@ def parse_pcap_files(pcap_dir, output_csv):
                     except (ValueError, AttributeError):
                         pass
 
-                # B. Record High-Resolution Timestamp of the First TCP SYN & Count Retransmissions
+                # B. Record TCP SYN, SYN-ACK and TCP Retransmissions
                 if "TCP" in packet:
                     try:
                         # 1. Count TCP Retransmissions (Empirical Packet Loss Impact)
                         if hasattr(packet.tcp, "analysis_retransmission"):
                             tcp_retransmissions += 1
                         
-                        # 2. Track initial SYN packet
+                        # 2. Track SYN and SYN-ACK to calculate pure network Round Trip Time (RTT)
                         flags = int(packet.tcp.flags, 16)
-                        if (flags & 0x002) and not (flags & 0x010):  # SYN=1, ACK=0
-                            if tcp_syn_time is None:
-                                tcp_syn_time = float(packet.sniff_time.timestamp())
+                        if (flags & 0x002):  # SYN is present
+                            if not (flags & 0x010):  # ACK is not present -> Client TCP SYN
+                                if tcp_syn_time is None:
+                                    tcp_syn_time = sniff_time_sec
+                            else:  # ACK is present -> Server TCP SYN-ACK
+                                if tcp_syn_ack_time is None:
+                                    tcp_syn_ack_time = sniff_time_sec
                     except (ValueError, AttributeError):
                         pass
 
@@ -112,7 +135,7 @@ def parse_pcap_files(pcap_dir, output_csv):
                         
                         # Detect Handshake Finished / Encrypted Handshake Message from Client (Record Type = 22)
                         if hasattr(packet.tls, "record_content_type") and packet.tls.record_content_type == "22":
-                            tls_finished_time = float(packet.sniff_time.timestamp())
+                            tls_finished_time = sniff_time_sec
                             
                     except AttributeError:
                         pass
@@ -122,7 +145,9 @@ def parse_pcap_files(pcap_dir, output_csv):
         finally:
             cap.close()
 
-        # --- 4. CALCULATE HIGH-RESOLUTION TIME DELTA ---
+        # --- 4. DATA METRIC SYNTHESIS & EMPIRICAL CALCULATIONS ---
+        
+        # A. Handshake Completion Time (End-to-End Handshake Latency)
         if tcp_syn_time and tls_finished_time and negotiated_state != "SF":
             handshake_time_ms = (tls_finished_time - tcp_syn_time) * 1000.0
             if handshake_time_ms < 0:
@@ -132,13 +157,33 @@ def parse_pcap_files(pcap_dir, output_csv):
             handshake_time_ms = np.nan
             negotiated_state = "SF"  # Handshake timeout / failure
 
-        print(f"    -> Results: State = {negotiated_state} | Handshake Time = {handshake_time_ms:.2f} ms | Fragments = {fragment_count} | TCP Retransmissions = {tcp_retransmissions}")
+        # B. Pure Observed Network RTT (First TCP SYN -> Server SYN-ACK)
+        if tcp_syn_time and tcp_syn_ack_time:
+            observed_rtt_ms = (tcp_syn_ack_time - tcp_syn_time) * 1000.0
+        else:
+            observed_rtt_ms = np.nan
 
-        # Append structured telemetry row
+        # C. Empirical Packet-to-Packet Jitter (Standard Deviation of Inter-Arrival Times)
+        if len(packet_timestamps) > 1:
+            # Calculate the time interval between consecutive packets in milliseconds
+            deltas = np.diff(packet_timestamps) * 1000.0
+            # Standard deviation represents packet delay variation (Jitter)
+            observed_jitter_ms = np.std(deltas)
+        else:
+            observed_jitter_ms = np.nan
+
+        print(f"    -> Results: State = {negotiated_state} | Handshake Time = {handshake_time_ms:.2f} ms")
+        print(f"                Observed RTT = {observed_rtt_ms:.2f} ms | Observed Jitter = {observed_jitter_ms:.2f} ms")
+        print(f"                Fragments = {fragment_count} | TCP Retransmissions = {tcp_retransmissions}")
+
+        # Append structured telemetry row containing both Design and Empirical parameters
         dataset.append({
             "Latency_Injected": latency_injected,
+            "Jitter_Injected": jitter_injected,
             "Packet_Loss_Injected": loss_injected,
             "Handshake_Completion_Time_ms": handshake_time_ms,
+            "Observed_Network_RTT_ms": observed_rtt_ms,
+            "Observed_Jitter_ms": observed_jitter_ms,
             "IP_Fragmentation_Count": fragment_count,
             "TCP_Retransmissions": tcp_retransmissions,
             "Final_Negotiated_State": negotiated_state,
@@ -147,7 +192,7 @@ def parse_pcap_files(pcap_dir, output_csv):
 
     # --- 5. COMPILE AND EXPORT CLEAN DATASET ---
     df = pd.DataFrame(dataset)
-    df = df.sort_values(by=["Latency_Injected", "Packet_Loss_Injected"])
+    df = df.sort_values(by=["Latency_Injected", "Jitter_Injected", "Packet_Loss_Injected"])
     df.to_csv(output_csv, index=False)
     print(f"\n[+] Processing Complete! Dataset successfully exported to: {output_csv}")
     return True
