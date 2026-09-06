@@ -14,10 +14,10 @@ Its function is to automatically parsing hybrid handshake packets to evaluate pe
 
 The script utilizes `pyshark` (a Python wrapper for `tshark`) to inspect the TLS and TCP layers, extracting 4 evaluation metrics required for our dataset:
 
-### Injected Parameters (Metadata Gating)
-* **Injected Latency, Loss, & Jitter:** Automatically parsed from the capture filename taxonomy (e.g., `hybrid_L100_J20_P5.pcap`).
+### Injected Parameters
+* **Injected Latency, Loss, & Jitter:** Automatically parsed from the filename (e.g., `hybrid_L100_J20_P5.pcap`).
 
-### Observed Empirical Metrics (Calculated from PCAP)
+### Observed Metrics (from PCAP)
 1. **Handshake Completion Time (Latency):** Calculates the precise delta (in milliseconds) between the initial `TCP SYN` and the client's `TLS Finished` message.
 2. **Observed Network RTT:** Measures the actual network round-trip time calculated from the initial `TCP SYN` to `TCP SYN-ACK` handshake.
 3. **Observed Jitter:** Calculates the standard deviation of packet inter-arrival times, capturing the impact of jitter on the packet stream.
@@ -27,7 +27,7 @@ The script utilizes `pyshark` (a Python wrapper for `tshark`) to inspect the TLS
 
 ## Current Status
 
-**Testing Phase:** The script has been successfully validated against a preliminary real-world sample (`hybrid_L100_P5.pcap`). The parser accurately captured state degradation ($S_2$ fallback to Group 29) alongside 9 TCP retransmissions, confirming its readiness to process the full batch of experimental captures from the network team.
+**Testing Phase:** The script has been successfully validated against a sample (`hybrid_L100_P5.pcap`). The parser accurately captured state degradation ($S_2$ fallback to Group 29) alongside 9 TCP retransmissions, confirming its readiness to process the full batch of experimental captures from the network team.
 
 ## Usage Instructions
 
